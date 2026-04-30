@@ -1,187 +1,265 @@
 """
-Tests for the SkillManifest dataclass and SkillLoader.
+Tests for the TierManifest dataclass and TierLoader.
 No network calls, no external dependencies.
 """
 
 import pytest
-from flubroad.skill import SkillManifest, SkillLoader
+from bioagent.core.tier import TierManifest, TierLoader, TierNotFoundError
 
 
-# ── Minimal valid manifest fixture ──────────────────────────────────────────
+# ── Minimal valid manifest fixtures ────────────────────────────────────────
 
-SECTION_QUERIES = {
-    "problem": "disease mutation incidence mortality",
-    "results": "drug trial ORR PFS response",
+MODEL_CONTAINERS = {
+    "dna-lm": "test_tier.containers.dna:DNAContainer",
+    "ppi": "test_tier.containers.ppi:PPIContainer",
 }
 
-SECTION_INSTRUCTIONS = {
-    "problem": "Write the Problem section. Cite every claim with PMID. 150 words.",
-    "results": "Write the Results section. Compare 3+ drugs. Cite PMID. 300 words.",
-}
-
-EXTRACTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "entities": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "drug_name": {"type": "string"},
-                    "target": {"type": "string"},
-                    "key_pmids": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["drug_name", "target"],
-            },
-        }
+MODELS_METADATA = {
+    "dna-lm": {
+        "architecture": "DNABERT-2",
+        "parameters": "110M",
+        "min_vram_gb": 8,
+    },
+    "ppi": {
+        "architecture": "SEHI-PPI",
+        "parameters": "68M",
+        "min_vram_gb": 6,
     },
 }
 
 
 @pytest.fixture
-def minimal_manifest():
-    return SkillManifest(
-        name="test-skill",
+def minimal_precision_manifest():
+    """A valid Tier 2 (Precision) manifest with two model containers."""
+    return TierManifest(
+        name="precision-pack",
+        version="1.0.0",
+        tier="precision",
+        display_name="Precision Pack",
+        provides=["model_container"],
+        containers=MODEL_CONTAINERS,
+        models=MODELS_METADATA,
+    )
+
+
+@pytest.fixture
+def minimal_fusion_manifest():
+    """A valid Tier 3 (Fusion) manifest with ETL adapters."""
+    return TierManifest(
+        name="fusion-pack",
         version="0.1.0",
-        display_name="Test Skill",
-        agents=["pubmed", "europe_pmc"],
-        section_queries=SECTION_QUERIES,
-        section_instructions=SECTION_INSTRUCTIONS,
-        extraction_schema=EXTRACTION_SCHEMA,
+        tier="fusion",
+        display_name="Fusion Pack",
+        provides=["etl_adapter"],
+        etl_adapters={
+            "fastq": "fusion_pack.etl:FastqLoader",
+        },
+        supported_formats={
+            "fastq": ["fastq", "fastq.gz"],
+        },
     )
 
 
-# ── Required field tests ─────────────────────────────────────────────────────
-
-def test_manifest_type(minimal_manifest):
-    assert isinstance(minimal_manifest, SkillManifest)
-
-
-def test_required_fields(minimal_manifest):
-    assert minimal_manifest.name == "test-skill"
-    assert minimal_manifest.version == "0.1.0"
-    assert minimal_manifest.display_name == "Test Skill"
-    assert minimal_manifest.agents == ["pubmed", "europe_pmc"]
-    assert minimal_manifest.section_queries
-    assert minimal_manifest.section_instructions
-    assert minimal_manifest.extraction_schema
-
-
-def test_sections_consistent(minimal_manifest):
-    assert set(minimal_manifest.section_queries.keys()) == set(
-        minimal_manifest.section_instructions.keys()
+@pytest.fixture
+def minimal_horizontal_manifest():
+    """A valid horizontal layer manifest."""
+    return TierManifest(
+        name="compliance-pack",
+        version="0.2.0",
+        tier="horizontal",
+        display_name="Compliance Pack",
+        provides=["compliance_template", "feedback_loop"],
+        horizontals={
+            "compliance": "comp_pack.compliance:Loi25Report",
+        },
     )
 
 
-# ── Default value tests ──────────────────────────────────────────────────────
+# ── Required field tests ──────────────────────────────────────────────────
 
-def test_default_agents_fallback(minimal_manifest):
-    """When default_agents is not set, it defaults to the full agents list."""
-    assert minimal_manifest.default_agents == ["pubmed", "europe_pmc"]
-
-
-def test_output_section_order_fallback(minimal_manifest):
-    """When output_section_order is not set, it matches section_queries keys."""
-    assert set(minimal_manifest.output_section_order) == set(
-        minimal_manifest.section_queries.keys()
-    )
+def test_manifest_type(minimal_precision_manifest):
+    assert isinstance(minimal_precision_manifest, TierManifest)
 
 
-def test_system_prompt_auto_generated(minimal_manifest):
-    """system_prompt is auto-generated from display_name when not provided."""
-    assert "Test Skill" in minimal_manifest.system_prompt
-    assert len(minimal_manifest.system_prompt) > 0
+def test_required_fields_precision(minimal_precision_manifest):
+    m = minimal_precision_manifest
+    assert m.name == "precision-pack"
+    assert m.version == "1.0.0"
+    assert m.tier == "precision"
+    assert m.display_name == "Precision Pack"
+    assert m.provides == ["model_container"]
+    assert m.containers == MODEL_CONTAINERS
+    assert m.models == MODELS_METADATA
 
 
-def test_empty_optional_fields(minimal_manifest):
-    assert minimal_manifest.description == ""
-    assert minimal_manifest.topic_keywords == []
-    assert minimal_manifest.grant_templates == {}
-    assert minimal_manifest.knowledge_graph_config == {}
-    assert minimal_manifest.finetuning_config == {}
-    assert minimal_manifest.chart_config == {}
+def test_default_requires_gpu(minimal_precision_manifest):
+    assert minimal_precision_manifest.requires_gpu is True
 
 
-# ── Property tests ───────────────────────────────────────────────────────────
+# ── Validation tests (__post_init__) ──────────────────────────────────────
 
-def test_sections_property(minimal_manifest):
-    assert minimal_manifest.sections == minimal_manifest.output_section_order
+def test_invalid_tier_raises():
+    with pytest.raises(ValueError, match="tier must be one of"):
+        TierManifest(
+            name="bad",
+            version="1.0.0",
+            tier="nonexistent",
+            display_name="Bad",
+            provides=["model_container"],
+            containers={"m": "p:Cls"},
+            models={"m": {}},
+        )
 
 
-def test_section_title_custom():
-    m = SkillManifest(
+def test_invalid_provides_raises():
+    with pytest.raises(ValueError, match="Invalid provides value"):
+        TierManifest(
+            name="bad",
+            version="1.0.0",
+            tier="precision",
+            display_name="Bad",
+            provides=["unknown_component"],
+        )
+
+
+def test_model_container_requires_containers_dict():
+    with pytest.raises(ValueError, match="requires 'containers' dict"):
+        TierManifest(
+            name="bad",
+            version="1.0.0",
+            tier="precision",
+            display_name="Bad",
+            provides=["model_container"],
+        )
+
+
+def test_model_container_requires_models_dict():
+    with pytest.raises(ValueError, match="requires 'models' dict"):
+        TierManifest(
+            name="bad",
+            version="1.0.0",
+            tier="precision",
+            display_name="Bad",
+            provides=["model_container"],
+            containers={"m": "p:Cls"},
+        )
+
+
+def test_models_keys_must_match_containers():
+    with pytest.raises(ValueError, match="keys.*not present in containers"):
+        TierManifest(
+            name="bad",
+            version="1.0.0",
+            tier="precision",
+            display_name="Bad",
+            provides=["model_container"],
+            containers={"a": "p:Cls"},
+            models={"b": {}},  # mismatched
+        )
+
+
+def test_containers_keys_missing_from_models():
+    with pytest.raises(ValueError, match="lack entries in models"):
+        TierManifest(
+            name="bad",
+            version="1.0.0",
+            tier="precision",
+            display_name="Bad",
+            provides=["model_container"],
+            containers={"a": "p:Cls", "b": "p:Cls2"},
+            models={"a": {}},  # missing b
+        )
+
+
+def test_etl_adapter_requires_etl_adapters():
+    with pytest.raises(ValueError, match="requires 'etl_adapters' dict"):
+        TierManifest(
+            name="bad",
+            version="1.0.0",
+            tier="fusion",
+            display_name="Bad",
+            provides=["etl_adapter"],
+        )
+
+
+# ── Default value tests ───────────────────────────────────────────────────
+
+def test_empty_optional_fields(minimal_precision_manifest):
+    m = minimal_precision_manifest
+    assert m.description == ""
+    assert m.hardware_requirements == {}
+    assert m.docker_compose_fragment == ""
+    assert m.horizontals == {}
+    assert m.compliance_templates == {}
+    assert m.finetuning_config == {}
+    assert m.etl_adapters == {}
+    assert m.supported_formats == {}
+
+
+def test_requires_gpu_explicit_false():
+    m = TierManifest(
         name="t",
         version="1.0.0",
+        tier="precision",
         display_name="T",
-        agents=["pubmed"],
-        section_queries={"results": "q"},
-        section_instructions={"results": "i"},
-        extraction_schema={},
-        output_section_titles={"results": "Key Clinical Results"},
+        provides=["model_container"],
+        containers={"a": "p:Cls"},
+        models={"a": {}},
+        requires_gpu=False,
     )
-    assert m.section_title("results") == "Key Clinical Results"
+    assert m.requires_gpu is False
 
 
-def test_section_title_fallback(minimal_manifest):
-    """Titles not in output_section_titles fall back to title-cased key."""
-    assert minimal_manifest.section_title("problem") == "Problem"
+# ── Property and helper tests ─────────────────────────────────────────────
+
+def test_sections_property(minimal_precision_manifest):
+    """sections returns sorted provides list."""
+    assert minimal_precision_manifest.sections == ["model_container"]
 
 
-def test_summary(minimal_manifest):
-    s = minimal_manifest.summary()
-    assert "test-skill" in s
-    assert "0.1.0" in s
-    assert "2 agents" in s
-    assert "2 sections" in s
+def test_sections_property_multiple(minimal_horizontal_manifest):
+    assert minimal_horizontal_manifest.sections == sorted(["compliance_template", "feedback_loop"])
 
 
-# ── is_relevant tests ────────────────────────────────────────────────────────
-
-def test_is_relevant_no_keywords(minimal_manifest):
-    """No topic_keywords means everything is relevant."""
-    assert minimal_manifest.is_relevant("anything", "at all") is True
-
-
-def test_is_relevant_keyword_match():
-    m = SkillManifest(
-        name="t",
-        version="1.0.0",
-        display_name="T",
-        agents=["pubmed"],
-        section_queries={"r": "q"},
-        section_instructions={"r": "i"},
-        extraction_schema={},
-        topic_keywords=["kras", "nsclc", "lung cancer"],
-    )
-    assert m.is_relevant("KRAS G12C mutation in NSCLC", "") is True
-    assert m.is_relevant("unrelated title", "unrelated abstract") is False
+def test_container_metadata(minimal_precision_manifest):
+    m = minimal_precision_manifest
+    assert m.container_metadata("dna-lm")["architecture"] == "DNABERT-2"
+    assert m.container_metadata("ppi")["parameters"] == "68M"
+    assert m.container_metadata("nonexistent") == {}
 
 
-def test_is_relevant_min_hits():
-    m = SkillManifest(
-        name="t",
-        version="1.0.0",
-        display_name="T",
-        agents=["pubmed"],
-        section_queries={"r": "q"},
-        section_instructions={"r": "i"},
-        extraction_schema={},
-        topic_keywords=["kras", "nsclc"],
-    )
-    # Only 1 keyword hit, min_hits=2 should fail
-    assert m.is_relevant("KRAS mutation in something", "", min_hits=2) is False
-    # Both keywords present
-    assert m.is_relevant("KRAS NSCLC study", "", min_hits=2) is True
+def test_summary(minimal_precision_manifest):
+    s = minimal_precision_manifest.summary()
+    assert "precision-pack" in s
+    assert "1.0.0" in s
+    assert "precision" in s
+    assert "model_container" in s
+    assert "2" in s  # 2 containers
 
 
-# ── SkillLoader tests ────────────────────────────────────────────────────────
+def test_summary_fusion(minimal_fusion_manifest):
+    s = minimal_fusion_manifest.summary()
+    assert "fusion-pack" in s
+    assert "fusion" in s
+    assert "etl_adapter" in s
+    assert "1" in s  # 1 etl adapter
 
-def test_skill_loader_unknown_raises():
-    from flubroad.skill import SkillNotFoundError
-    with pytest.raises(SkillNotFoundError):
-        SkillLoader.load("definitely-not-a-real-skill-xyzzy")
+
+# ── TierLoader tests ─────────────────────────────────────────────────────
+
+def test_tier_loader_unknown_raises():
+    with pytest.raises(TierNotFoundError):
+        TierLoader.load("definitely-not-a-real-tier-xyzzy")
 
 
-def test_skill_loader_all_returns_dict():
-    result = SkillLoader.all()
+def test_tier_loader_all_returns_dict():
+    result = TierLoader.all()
     assert isinstance(result, dict)
+
+
+def test_tier_loader_names_returns_list():
+    names = TierLoader.names()
+    assert isinstance(names, list)
+    # In a test environment with no installed tier packages, names should be empty.
+    # (or contain whatever is registered via entry points)
+    assert "definitely-not-a-real-tier" not in names

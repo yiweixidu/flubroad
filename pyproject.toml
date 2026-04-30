@@ -3,15 +3,25 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flubroad"
+name = "bioagent"
 version = "0.1.0"
-description = "Multi-agent framework for AI-assisted biomedical literature synthesis"
+description = "On-premises multimodal molecular intelligence platform for biomedical research partnerships"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 
 dependencies = [
     "pydantic>=2.0",
+    "langchain>=0.2",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "chromadb>=0.4",
+    "transformers>=4.40",
+    "torch>=2.2",
+    "peft>=0.10",
+    "biopython>=1.83",
+    "python-docx>=1.1",
+    "python-pptx>=0.6",
     "importlib-metadata>=6.0; python_version < '3.12'",
 ]
 
@@ -19,15 +29,16 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",
+    "httpx>=0.27",
 ]
 
 [tool.setuptools.packages.find]
 where   = ["."]
-include = ["flubroad*"]
+include = ["bioagent*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 markers = [
-    "integration: marks tests that require real API access (skip with -m 'not integration')",
-    "eval: marks tests that require live LLM calls (skip with -m 'not eval')",
+    "integration: marks tests that require local model or database services (skip with -m 'not integration')",
+    "slow: marks tests that run training or large ETL jobs (skip with -m 'not slow')",
 ]
