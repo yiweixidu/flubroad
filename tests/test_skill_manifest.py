@@ -4,7 +4,7 @@ No network calls, no external dependencies.
 """
 
 import pytest
-from bioagent.core.tier import TierManifest, TierLoader, TierNotFoundError
+from bioagent.tier import TierManifest, TierLoader, TierNotFoundError
 
 
 # ── Minimal valid manifest fixtures ────────────────────────────────────────
